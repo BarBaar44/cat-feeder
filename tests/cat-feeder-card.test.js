@@ -238,6 +238,73 @@ test("config errors", () => {
   for (const [cfg, re] of bad) assert.throws(() => new Card().setConfig(cfg), re);
 });
 
+
+test("editor: defaults shown, only changes written, round trip", async () => {
+  const Editor = w.customElements.get("cat-feeder-card-editor");
+  assert(Editor, "editor registered");
+  assert.equal(Card.getConfigElement().tagName.toLowerCase(), "cat-feeder-card-editor");
+
+  const minimal = { type: "custom:cat-feeder-card", grid_options: { columns: 3, rows: 2 } };
+  const d0 = Editor.toData(minimal);
+  assert.equal(d0.name, "Cat Feeder");
+  assert.deepEqual(d0.schedules, [SCHED]);
+  assert.equal(d0.entities.last_feed, FEED);
+  assert.equal(d0.entities.error, ERR);
+  assert.equal(d0.grace_minutes, 10);
+  assert.deepEqual(Editor.toConfig(d0, minimal), minimal, "unchanged writes nothing new");
+
+  // schedules, cleared entity, grace
+  const d1 = Editor.toData(minimal);
+  d1.schedules = [SCHED, "switch.schedule_cat_feeder_daily_17h"];
+  d1.entities.error = "";
+  d1.grace_minutes = 15;
+  const c1 = Editor.toConfig(d1, minimal);
+  assert.deepEqual(c1.schedules, [SCHED, "switch.schedule_cat_feeder_daily_17h"]);
+  assert.deepEqual(c1.entities, { error: null });
+  assert.equal(c1.grace_minutes, 15);
+  assert.equal(Editor.toData(c1).entities.error, "");
+  assert.deepEqual(Editor.toConfig(Editor.toData(c1), c1), c1, "round trip");
+
+  // no schedules left, or an empty grace: back to the defaults
+  const d2 = Editor.toData(c1);
+  d2.schedules = [];
+  d2.grace_minutes = undefined;
+  const c2 = Editor.toConfig(d2, c1);
+  assert.equal("schedules" in c2, false);
+  assert.equal("grace_minutes" in c2, false);
+
+  // name, actions, colours
+  const full = {
+    type: "custom:cat-feeder-card", name: "Feeder", tap_action: { action: "more-info" },
+    hold_action: { action: "none" }, colors: { on: "teal" },
+  };
+  assert.deepEqual(Editor.toConfig(Editor.toData(full), full), full);
+  const d3 = Editor.toData(full);
+  d3.colors.on = " ";
+  assert.equal(Editor.toConfig(d3, full).colors, undefined, "empty colour dropped");
+
+  // every config the editor writes is accepted by the card
+  new Card().setConfig(c1);
+  new Card().setConfig(c2);
+  new Card().setConfig(Editor.toConfig(Editor.toData(full), full));
+
+  // with a stub ha-form: renders and passes changes on
+  if (!w.customElements.get("ha-form")) w.customElements.define("ha-form", class extends w.HTMLElement {});
+  const ed = new Editor();
+  const got = [];
+  ed.addEventListener("config-changed", (e) => got.push(e.detail.config));
+  ed.setConfig(minimal);
+  w.document.body.appendChild(ed);
+  await new Promise((r) => setTimeout(r, 0));
+  const form = ed.querySelector("ha-form");
+  assert(form, "ha-form rendered");
+  assert.deepEqual(form.data.schedules, [SCHED]);
+  assert.equal(form.computeLabel({ name: "grace_minutes" }), "Missed after");
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, name: "Poes" } } }));
+  assert.deepEqual(got[0], { ...minimal, name: "Poes" });
+  ed.remove();
+});
+
 (async () => {
   let failed = 0;
   for (const [name, fn] of tests) {

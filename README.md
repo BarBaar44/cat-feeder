@@ -28,6 +28,8 @@ grid_options:
 
 More in [cat-feeder.yaml](cat-feeder.yaml).
 
+Or use the card editor: it shows the name, the schedules, both entities and the grace time with the values in use, defaults included, plus tap and hold actions and colours. Clearing an entity switches that part off; clearing all schedules or the grace time goes back to the default. Only values that differ from the defaults are written to the YAML, and options the editor does not show, such as `grid_options`, are kept.
+
 ### Options
 
 | Option          | Default                                       |
