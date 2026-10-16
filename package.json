@@ -1,0 +1,11 @@
+{
+  "name": "cat-feeder-card",
+  "private": true,
+  "description": "Development only: tests for cat-feeder-card.js. The card itself has no dependencies.",
+  "scripts": {
+    "test": "node tests/cat-feeder-card.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.0"
+  }
+}

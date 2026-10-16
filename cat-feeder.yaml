@@ -1,0 +1,29 @@
+# Minimal: the default entities.
+type: custom:cat-feeder-card
+grid_options:
+  columns: 3
+  rows: 2
+
+---
+# Everything, with the defaults written out.
+type: custom:cat-feeder-card
+name: Cat Feeder
+schedules:
+  - switch.schedule_cat_feeder_daily_8h
+entities:
+  last_feed: sensor.cat_feeder_last_feed
+  error: binary_sensor.cat_feeder_error
+grace_minutes: 10
+tap_action:
+  action: toggle
+hold_action:
+  action: more-info
+colors:
+  on: var(--green-color)
+  feeding: var(--green-color)
+  off: var(--disabled-color)
+  error: var(--error-color)
+  missed: var(--error-color)
+grid_options:
+  columns: 3
+  rows: 2
