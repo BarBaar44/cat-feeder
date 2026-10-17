@@ -19,7 +19,7 @@
 // Everything sits in one block so the top-level names cannot clash with the
 // sister cards when the files are loaded as classic scripts.
 {
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const FEEDER_HOLD_MS = 500;
 const FEEDER_MOVE_PX = 10;
@@ -154,6 +154,10 @@ class CatFeederCard extends HTMLElement {
     this._ids = [];
     this._tick = null;
     this._feedTimer = null;
+  }
+
+  static getConfigElement() {
+    return document.createElement("cat-feeder-card-editor");
   }
 
   static getStubConfig() {
@@ -556,8 +560,174 @@ class CatFeederCard extends HTMLElement {
   }
 }
 
+/* ------------------------------------------------------------------------ */
+/* Visual editor                                                            */
+/* ------------------------------------------------------------------------ */
+
+/*
+ * Built on HA's own <ha-form>. Every field shows the value in use, defaults
+ * included; only values that differ from the defaults are written to the
+ * YAML. Clearing an entity switches that part off (null); clearing all
+ * schedules or the grace time goes back to the default (the card needs
+ * them). Options the editor does not show (grid_options, ...) are kept.
+ */
+
+const FEEDER_ENTITY_FIELDS = [
+  ["last_feed", "Last confirmed feed (timestamp)", ["sensor", "input_datetime"]],
+  ["error", "Feeder error", ["binary_sensor", "input_boolean"]],
+];
+
+const FEEDER_EDITOR_SCHEMA = [
+  { name: "name", selector: { text: {} } },
+  { name: "schedules", selector: { entity: { multiple: true, filter: { domain: ["switch"] } } } },
+  {
+    type: "expandable",
+    name: "entities",
+    title: "Entities",
+    icon: "mdi:cat",
+    expanded: true,
+    schema: FEEDER_ENTITY_FIELDS.map(([role, , domains]) => ({
+      name: role,
+      selector: { entity: { filter: { domain: domains } } },
+    })),
+  },
+  { name: "grace_minutes", selector: { number: { min: 0, max: 240, step: 1, mode: "box", unit_of_measurement: "min" } } },
+  {
+    type: "expandable",
+    name: "",
+    title: "Actions",
+    icon: "mdi:gesture-tap",
+    schema: [
+      { name: "tap_action", selector: { ui_action: { default_action: "toggle" } } },
+      { name: "hold_action", selector: { ui_action: { default_action: "more-info" } } },
+    ],
+  },
+  {
+    type: "expandable",
+    name: "colors",
+    title: "Colours",
+    icon: "mdi:palette",
+    schema: [{
+      type: "grid",
+      name: "",
+      schema: Object.keys(FEEDER_COLORS).map((k) => ({ name: k, selector: { text: {} } })),
+    }],
+  },
+];
+
+const FEEDER_EDITOR_LABELS = {
+  name: "Name",
+  schedules: "Feeding schedules (Scheduler switches; tap toggles the first)",
+  grace_minutes: "Missed after",
+  tap_action: "Tap action",
+  hold_action: "Hold action",
+  missed: "missed feed",
+  ...Object.fromEntries(FEEDER_ENTITY_FIELDS.map(([k, label]) => [k, label])),
+};
+
+const feederSameList = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+class CatFeederCardEditor extends HTMLElement {
+  /* config -> form data: defaults filled in, null shown as empty. */
+  static toData(config) {
+    const ent = config.entities || {};
+    const entities = {};
+    for (const role of Object.keys(FEEDER_DEFAULTS.entities)) {
+      const v = role in ent ? ent[role] : FEEDER_DEFAULTS.entities[role];
+      entities[role] = v || "";
+    }
+    const grace = feederNum(config.grace_minutes);
+    return {
+      name: config.name == null ? FEEDER_DEFAULTS.name : config.name,
+      schedules: [...(Array.isArray(config.schedules) && config.schedules.length ? config.schedules : FEEDER_DEFAULTS.schedules)],
+      entities,
+      grace_minutes: grace == null ? FEEDER_DEFAULTS.grace_minutes : grace,
+      tap_action: config.tap_action,
+      hold_action: config.hold_action,
+      colors: { ...(config.colors || {}) },
+    };
+  }
+
+  /* form data -> config: only what differs from the defaults; cleared entity -> null. */
+  static toConfig(data, previous) {
+    const config = { type: "custom:cat-feeder-card" };
+    const handled = ["type", "name", "schedules", "entities", "grace_minutes", "tap_action", "hold_action", "colors"];
+    for (const [k, v] of Object.entries(previous || {})) {
+      if (!handled.includes(k)) config[k] = v;
+    }
+    if (data.name != null && data.name !== FEEDER_DEFAULTS.name) config.name = data.name;
+    const schedules = (data.schedules || []).filter(feederId);
+    if (schedules.length && !feederSameList(schedules, FEEDER_DEFAULTS.schedules)) config.schedules = schedules;
+    const entities = {};
+    for (const [role, def] of Object.entries(FEEDER_DEFAULTS.entities)) {
+      const v = (data.entities || {})[role];
+      if (!v) entities[role] = null;
+      else if (v !== def) entities[role] = v;
+    }
+    if (Object.keys(entities).length) config.entities = entities;
+    const grace = feederNum(data.grace_minutes);
+    if (grace != null && grace >= 0 && grace !== FEEDER_DEFAULTS.grace_minutes) config.grace_minutes = grace;
+    if (data.tap_action && Object.keys(data.tap_action).length) config.tap_action = data.tap_action;
+    if (data.hold_action && Object.keys(data.hold_action).length) config.hold_action = data.hold_action;
+    const colors = {};
+    for (const [k, v] of Object.entries(data.colors || {})) {
+      if (typeof v === "string" && v.trim()) colors[k] = v.trim();
+    }
+    if (Object.keys(colors).length) config.colors = colors;
+    return config;
+  }
+
+  setConfig(config) {
+    this._config = config;
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) this._form.hass = hass;
+  }
+
+  connectedCallback() {
+    this._loadForm().then(() => this._render());
+  }
+
+  /* ha-form is lazy loaded by HA; load it through a built-in card's editor. */
+  async _loadForm() {
+    if (customElements.get("ha-form")) return;
+    try {
+      const helpers = await window.loadCardHelpers();
+      const card = await helpers.createCardElement({ type: "entities", entities: [] });
+      if (card.constructor.getConfigElement) await card.constructor.getConfigElement();
+    } catch (_) {
+      /* rendered as soon as HA has loaded it */
+    }
+    await customElements.whenDefined("ha-form");
+  }
+
+  _render() {
+    if (!this._config || !customElements.get("ha-form")) return;
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.schema = FEEDER_EDITOR_SCHEMA;
+      this._form.computeLabel = (s) => FEEDER_EDITOR_LABELS[s.name] || s.name.replace(/_/g, " ");
+      this._form.addEventListener("value-changed", (e) => {
+        e.stopPropagation();
+        const config = CatFeederCardEditor.toConfig(e.detail.value, this._config);
+        this._config = config;
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+      });
+      this.appendChild(this._form);
+    }
+    this._form.hass = this._hass;
+    this._form.data = CatFeederCardEditor.toData(this._config);
+  }
+}
+
 if (!customElements.get("cat-feeder-card")) {
   customElements.define("cat-feeder-card", CatFeederCard);
+}
+if (!customElements.get("cat-feeder-card-editor")) {
+  customElements.define("cat-feeder-card-editor", CatFeederCardEditor);
 }
 
 window.customCards = window.customCards || [];

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.0
+
+### Added
+* **Visual editor:** name, schedules, the last feed and error entities, the grace time before a feed counts as missed, tap and hold actions and colours. Every field shows the value in use, defaults included. Clearing an entity switches that part off; clearing all schedules or the grace time goes back to the default. Only values that differ from the defaults are written to the YAML, and options the editor does not show are kept.
+
 ## v0.1.0
 
 First release. A small tile for a cat feeder run by Scheduler schedules, next to the Espresso Card and in the style of the other cards.
